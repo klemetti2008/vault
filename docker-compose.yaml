@@ -1,0 +1,67 @@
+version: '3'
+
+networks:
+  ctp_vault_network:
+    name: taherBridge
+    external: true
+
+services:
+  ctp_vault:
+    container_name: ctp_vault
+    depends_on:
+      - ctp_postgres
+    image: registry.gitag.ir/ctp_vault
+    networks:
+      - ctp_vault_network
+    env_file: .env
+    restart: unless-stopped
+
+  ctp_postgres:
+    container_name: ctp_postgres
+    image: postgres:14.4-alpine
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST_AUTH_METHOD: password
+      PGDATA: /data/postgres
+    volumes:
+      - ctp-postgres-data:/data/postgres
+    networks:
+      - ctp_vault_network
+    restart: unless-stopped
+    labels:
+      - docker-volume-backup.stop-during-backup=false
+
+  ctp_postgres_backup:
+    container_name: ctp_postgres_backup
+    image: offen/docker-volume-backup:v2
+    depends_on:
+      - ctp_postgres
+    env_file: .env
+    environment:
+      # A backup is taken each day at 2AM
+      BACKUP_CRON_EXPRESSION: "0 2 * * *"
+      # Backups are stored with a timestamp appended
+      BACKUP_FILENAME: "ctp-postgres-data-%Y-%m-%dT%H-%M-%S.tar.gz"
+      # Backups older than 1 day will be pruned.
+      # If this value is not given, backup will be kept forever.
+      BACKUP_RETENTION_DAYS: "1"
+      SSH_HOST_NAME: ${BACKUP_SSH_HOST_NAME}
+      SSH_PORT: ${BACKUP_SSH_PORT}
+      SSH_USER: ${BACKUP_SSH_USER}
+      SSH_REMOTE_PATH: ${BACKUP_SSH_REMOTE_PATH}
+      #GPG_PASSPHRASE: ${BACKUP_GPG_PASSPHRASE}
+      NOTIFICATION_URLS: ${BACKUP_NOTIFICATION_URLS}
+    volumes:
+      # stop and restart all containers labeled as docker-volume-backup.stop-during-backup
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # PATH to private key inside host server
+      - ${BACKUP_SSH_ID_RSA_PATH}:/root/.ssh/id_rsa
+      # All volumes mounted to /backup/<some-name> will be backed up
+      - ctp-postgres-data:/backup/ctp-postgres-data:ro
+      # local backup by specifying a path
+      - /home/taher/backups:/archive
+
+volumes:
+  ctp-postgres-data:
